@@ -1,10 +1,14 @@
 # init-panel
 
-Read a comment-outlined Emacs configuration as a panel: folded sections with
-icons and rules, `;>` notes aligned in a drawn column and decorated with keys,
-badges and links, a kind icon per form in the left margin, a marker on the
-heading of the section you are in, a breadcrumb header, folded-package summaries. Built on the
-outline machinery Emacs 29 already ships. Zero dependencies. Works in `-nw`.
+A minor mode that shows an Emacs configuration written as a comment outline
+as a panel: sections folded and drawn with rules and icons, `;>` notes aligned
+in a column and decorated with keys, badges and links, a kind icon per form in
+the left margin, a marker on the current heading, a breadcrumb in the header
+line, and a keyword summary on folded `use-package` forms.
+
+It sits on top of `outline-minor-mode` (Emacs 29.1 or later), has no
+dependencies, and works in a terminal frame. A glyph the display cannot
+show falls back to plain text.
 
 ```
 ▸  ────────────────────────────────────────────────────── Core
@@ -88,6 +92,7 @@ heading cycle it / the whole buffer — that is Emacs' own
 | `[tag]` badges | `init-panel-tag-faces` | neutral badge |
 | Symbol links (`RET` / mouse-1 → describe) | `init-panel-link-symbols` | plain |
 | First argument of every form (the variable, hook, key, package) in its own face | `init-panel-highlight-targets` | plain |
+| Right-margin width in `margin` style | `init-panel-margin-width`, `init-panel-margin-min`, `init-panel-margin-max`, `init-panel-min-code-width` | collapses to `column` when there is no room |
 | "Packages" group in imenu | `init-panel-package-index` | — |
 | Folded `use-package` shows its keywords | `init-panel-fold-summary` | — |
 | `Section › Subsection` header line for the section point is in | `init-panel-header-line` `'point` / `'window-start` / nil | — |
@@ -116,9 +121,13 @@ Everything is font-lock keywords with `display` properties (rules, glyphs, the
 aligned column — measured in the text's own font width, so `C-x C-+` zoom keeps
 notes aligned), a handful of overlays in the left margin managed by
 `jit-lock`, and the built-in hooks (`window-size-change-functions`,
-`outline-view-change-hook`, `post-command-hook` for the guide). Cost is
-proportional to what is on screen; a 1000-line init fontifies in ~30 ms.
+`outline-view-change-hook`, `post-command-hook` for the guide). jit-lock only
+fontifies what is on screen. For scale: fontifying a whole generated
+1000-line init with `font-lock-ensure`, byte-compiled, takes roughly 70-110 ms
+in batch Emacs 31 (including the stock Emacs Lisp highlighting).
 
 ## Status
 
-0.2, extracted from a personal config. Feedback and issues welcome.
+Version 0.2.0, extracted from the author's own config. Tests: `make test`
+(ERT). `make compile` and `make checkdoc` run clean; `make lint` needs
+`package-lint` (see the Makefile).

@@ -1,22 +1,37 @@
 # Changelog
 
-## 0.2.0 — 2026-09-10
+## 0.2.0 — unreleased
 
-First version worth a name. Extracted from a personal Emacs config.
+First standalone version, extracted from a personal Emacs config. Not
+tagged yet.
 
-- Native `outline-minor-mode` folding (Emacs 29 default state, cycling, faces)
-- Notes (`;>` / `;.`) drawn at a column via `display`, zoom-safe; optional right margin
-- Section rules in box-drawing characters, icon per section from its name
-- Left margin: form-kind icons and a "you are here" marker on the current headings
-- Note decorations: keys, `[tag]` badges, symbol links (`RET` → `describe-symbol`)
-- Plain `;;` / `;` comments get quiet glyphs and the same decorations
-- First argument of every top-level form in its own face; imenu "Packages"
-- Folded `use-package` keyword summaries; `Section › Subsection` header line
-- Flymake end-of-line text hidden while reading
-- Opt-in per file: `init-panel: t` as a file-local variable + `init-panel-maybe-enable` on `hack-local-variables-hook`; the mode never enables itself elsewhere
-- Three fold states; empty keymap on purpose
-- Key detection only matches whole words (`has-agenda-view`, `SECRET`, `<style>` are not keys); `M-x cmd`, `C-x o o o`, `M-S-<up>` are
-- Marker faces: `;>` accent, `;.` secondary, `;;`/`;` quiet — markers stand apart from note text
-- `init-panel-normalize-buffer` strips hand-typed layout; imenu index sees through folding
-- ERT test suite, Makefile (test / compile / checkdoc / lint)
-- `init-panel-focus`: edit one block in an indirect buffer over the panel (child frame or window); `C-c C-c` done, `C-c C-k` discard
+- Folding through `outline-minor-mode`: opens folded to sections,
+  `TAB` / `S-TAB` cycling, heading faces
+- Notes (`;>` / `;.`) drawn at a column with a `display` property, so they
+  stay aligned under text zoom; optional right-margin style
+- Section rules in box-drawing characters and an icon per section, chosen
+  from its name
+- Left margin: an icon for each top-level form's kind and a marker on the
+  current section and subsection headings
+- Note decorations: keys, `[tag]` badges, symbol links (`RET` runs
+  `describe-symbol`); plain `;;` / `;` comments get quiet glyphs and the
+  same decorations
+- First argument of each top-level form (variable, hook, key, package) in
+  its own face; "Packages" group in imenu
+- Folded `use-package` forms show a summary of their keywords;
+  `Section › Subsection` breadcrumb in the header line
+- Flymake end-of-line diagnostics hidden while the mode is on
+- Per-file opt-in: the `init-panel: t` file-local variable plus
+  `init-panel-maybe-enable` on `hack-local-variables-hook`; the mode never
+  turns itself on elsewhere
+- Three fold commands; the mode keymap is empty by design
+- Key detection matches whole words only (`has-agenda-view`, `SECRET` and
+  `<style>` are not keys; `M-x cmd`, `C-x o o o` and `M-S-<up>` are)
+- Separate faces for `;>`, `;.` and prose comment markers
+- `init-panel-normalize-buffer` strips hand-typed alignment; the imenu
+  index sees through folding
+- `init-panel-focus`: edit one block in an indirect buffer, in a child
+  frame or a window below; `C-c C-c` closes, `C-c C-k` discards the edits
+- Right-margin notes no longer start with a stray `>` when the comment
+  starter is longer than one character (`//`)
+- ERT test suite and a Makefile (`test`, `compile`, `checkdoc`, `lint`)
