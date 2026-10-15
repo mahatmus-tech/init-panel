@@ -4,7 +4,7 @@
 ;; Version: 0.2.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: outlines, convenience, faces
-;; URL: https://github.com/mahatmus-tech/emacs
+;; URL: https://github.com/mahatmus-tech/init-panel
 
 ;; This file is not part of GNU Emacs.
 
@@ -216,6 +216,11 @@ and subsection that contain point (a \"you are here\" pointer); `bar' draws
 nothing (the header line still names the section)."
   :type '(choice (const marker) (const bar) (const nil)))
 
+(defcustom init-panel-margin-cells 4
+  "Left margin width in default-face columns: marker, a space, and the icon.
+Nerd Font icons are double-width in non-Mono variants, hence 4."
+  :type 'integer)
+
 (defcustom init-panel-marker-char "▸"
   "Character placed on the current section's heading lines in `marker' style."
   :type 'string)
@@ -282,6 +287,17 @@ Fringe indicators stay.  Currently applies to Flymake."
   "Value given to `outline-minor-mode-use-buttons' while the mode is on.
 `in-margins' competes with the kind icons for the left margin."
   :type '(choice (const nil) (const t) (const insert) (const in-margins)))
+
+;;;; Options: focus
+
+(defcustom init-panel-focus-frame t
+  "Show the focus buffer in a child frame on graphical displays.
+Otherwise (and always on text terminals) it opens in a window below."
+  :type 'boolean)
+
+(defcustom init-panel-focus-max-height 40
+  "Most lines a focus frame or window will take."
+  :type 'integer)
 
 ;;;; Faces
 
@@ -399,18 +415,19 @@ between the previous and the next heading of any level.")
 (defvar-local init-panel--marked-headings nil
   "Line-beginning positions of the heading lines to mark in `marker' style.")
 
-(defvar-local init-panel--display-table nil)
-(defvar-local init-panel--saved-header-line nil)
-(defvar-local init-panel--left-margin-set nil)
+(defvar-local init-panel--display-table nil
+  "Display table that carries the fold ellipsis for this buffer.")
 
-(defvar init-panel--scroll-timer nil)
+(defvar-local init-panel--saved-header-line nil
+  "`header-line-format' as it was before the breadcrumb replaced it.")
+
+(defvar-local init-panel--left-margin-set nil
+  "Non-nil once the mode has given this buffer's windows a left margin.")
+
+(defvar init-panel--scroll-timer nil
+  "Pending timer that reapplies the layout after a scroll, or nil.")
 
 (defvar init-panel-mode)
-
-(defcustom init-panel-margin-cells 4
-  "Left margin width in default-face columns: marker, a space, and the icon.
-Nerd Font icons are double-width in non-Mono variants, hence 4."
-  :type 'integer)
 
 (defvar init-panel-link-map
   (let ((map (make-sparse-keymap)))
@@ -483,9 +500,9 @@ Nerd Font icons are double-width in non-Mono variants, hence 4."
                        (= (line-beginning-position) init-panel--point-line))))
 
 (defun init-panel--heading-level ()
-  "Level (1 or 2) of the heading in the current match data."
-  (if (= (- (match-end 1) (match-beginning 1)) (length (init-panel--comment) )) 1
-    (if (= (- (match-end 1) (match-beginning 1)) (* 3 (length (init-panel--comment)))) 1 2)))
+  "Level (1 or 2) of the heading in the current match data.
+Group 1 is three comment characters for a section, four for a subsection."
+  (if (= (- (match-end 1) (match-beginning 1)) (* 3 (length (init-panel--comment)))) 1 2))
 
 ;;;; Font-lock: headings
 
@@ -648,8 +665,9 @@ Only adds properties; the caller has already applied the base face."
 (defun init-panel--note-string (text)
   "Render TEXT (marker and note) as the decorated string shown in the margin.
 Callers inside font-lock must wrap this in `save-match-data'."
-  (let* ((marker (substring text 0 2))
-         (body (string-trim (substring text 2)))
+  (let* ((n (1+ (length (init-panel--comment))))
+         (marker (substring text 0 n))
+         (body (string-trim (substring text n)))
          (glyph (propertize (init-panel--glyph marker) 'face (init-panel--marker-face marker))))
     (with-temp-buffer
       (insert (propertize body 'face 'init-panel-note))
@@ -665,7 +683,9 @@ Callers inside font-lock must wrap this in `save-match-data'."
             (>= (save-excursion (goto-char beg) (current-column))
                 (or init-panel--column init-panel-column)))
         nil
-      (list 'face nil                                                ; (N . width): N times the face's font width, so
+      ;; (N . width) is N times the face's font width, so the column
+      ;; follows text zoom.
+      (list 'face nil
             'display `(space :align-to (,(or init-panel--column init-panel-column) . width))))))
 
 (defun init-panel--note-props ()
@@ -705,8 +725,10 @@ Headings (3+ chars), notes and autoload cookies are left to their own rules."
                   (re-search-forward (concat "\\(" c "+\\)\\(?:[ \t]+\\|$\\)\\(.*\\)$") limit t))
         (let* ((beg (match-beginning 1))
                (len (- (match-end 1) beg))
-               (state (save-excursion (syntax-ppss beg))))              ; syntax-ppss moves point: unguarded, a
-          (when (and (<= len 2)                                            ; rejected match is re-found forever
+               ;; `syntax-ppss' moves point; without `save-excursion' a
+               ;; rejected match would be found again forever.
+               (state (save-excursion (syntax-ppss beg))))
+          (when (and (<= len 2)
                      (not (nth 3 state)) (not (nth 4 state))
                      (not (string-match-p "\\`[>.]" (match-string-no-properties 2))))
             (setq found t))))
@@ -1148,15 +1170,6 @@ See `init-panel-normalize-region'."
 
 ;;;; Focus: edit one block in an indirect buffer, over the panel
 
-(defcustom init-panel-focus-frame t
-  "Show the focus buffer in a child frame on graphical displays.
-Otherwise (and always on text terminals) it opens in a window below."
-  :type 'boolean)
-
-(defcustom init-panel-focus-max-height 40
-  "Most lines a focus frame or window will take."
-  :type 'integer)
-
 (defvar-local init-panel--focus-base nil
   "The panel buffer a focus buffer was opened from.")
 
@@ -1219,7 +1232,9 @@ block, so the whole frame is room to work."
                         'face 'init-panel-header))
       (setq mode-line-format nil)
       (when (bound-and-true-p flymake-mode) (flymake-mode -1))
-      (setq-local flymake-diagnostic-functions nil) ; no checker in a scratch view of a block (also silences the "untrusted content" notice)
+      ;; No checker in a scratch view of a block; this also silences the
+      ;; "untrusted content" notice.
+      (setq-local flymake-diagnostic-functions nil)
       (setq init-panel--focus-undo-mark buffer-undo-list)
       (setq init-panel--focus-base base)
       (init-panel-focus-mode 1))
@@ -1346,7 +1361,9 @@ Bind what you like: `init-panel-show-headings',
   (when init-panel-section-guide
     (add-hook 'post-command-hook #'init-panel--guide-update nil t))
   ;; folded summaries
-  (when init-panel-fold-summary                                    ; obsolete since 29.1 with no replacement, still run by outline-flag-region
+  ;; `outline-view-change-hook' is obsolete since 29.1 with no replacement,
+  ;; and `outline-flag-region' still runs it.
+  (when init-panel-fold-summary
     (with-suppressed-warnings ((obsolete outline-view-change-hook))
       (add-hook 'outline-view-change-hook #'init-panel--refresh-summaries nil t)))
   ;; layout (note column, margins), per window

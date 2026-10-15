@@ -311,6 +311,17 @@ export BAR=2 #> [perf]: bar is fast
     (should (equal (init-panel-tests--prop "# plain remark" 0 'display) "·"))
     (should (memq 'help-key-binding (init-panel-tests--faces "# plain remark" 21)))))
 
+;;;; Multi-character comment starters
+
+(ert-deftest init-panel-margin-note-with-long-comment-start ()
+  "A `//' note keeps its text intact when rendered for the right margin."
+  (with-temp-buffer
+    (setq-local comment-start "// ")
+    (init-panel--build-regexps)
+    (init-panel--build-glyphs)
+    (should (equal (substring-no-properties (init-panel--note-string "//> why not"))
+                   (concat (init-panel--glyph "//>") " why not")))))
+
 ;;;; Normalizing
 
 (defconst init-panel-tests--padded "\
