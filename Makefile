@@ -13,8 +13,14 @@ compile:
 checkdoc:
 	$(EMACS) -Q --batch --eval '(checkdoc-file "$(PKG).el")'
 
+# Needs package-lint on the load path (M-x package-install RET package-lint,
+# or LINT_DIR=/path/to/package-lint).
+LINT_DIR ?=
+
 lint:
-	$(EMACS) -Q --batch -L . -l package-lint -f package-lint-batch-and-exit $(PKG).el
+	$(EMACS) -Q --batch -L . $(if $(LINT_DIR),-L $(LINT_DIR)) \
+	  --eval '(unless (require (quote package-lint) nil t) (error "package-lint not found; set LINT_DIR"))' \
+	  -f package-lint-batch-and-exit $(PKG).el
 
 clean:
 	rm -f *.elc
