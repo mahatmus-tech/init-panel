@@ -10,16 +10,7 @@ It sits on top of `outline-minor-mode` (Emacs 29.1 or later), has no
 dependencies, and works in a terminal frame. A glyph the display cannot
 show falls back to plain text.
 
-```
-▸  ────────────────────────────────────────────────────── Core
-▸  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ Navigation
-   󰛢 (add-hook 'after-init-hook #'column-number-mode)     → show column number in modeline
-    (setq-default truncate-lines t)                       → [fix]: long lines never wrap here — see `truncate-partial-width-windows'
-    (use-package winner  hook bind config ⬎               → undo/redo window layout changes
-   ───────────────────────────────────────────────────── Visuals
-   ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ Themes
- header line:  Core › Navigation
-```
+![init-panel sample](docs/sample.png)
 
 ## The file convention
 
