@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — unreleased
+## 0.2.0, unreleased
 
 First standalone version, extracted from a personal Emacs config. Not
 tagged yet.
@@ -35,3 +35,17 @@ tagged yet.
 - Right-margin notes no longer start with a stray `>` when the comment
   starter is longer than one character (`//`)
 - ERT test suite and a Makefile (`test`, `compile`, `checkdoc`, `lint`)
+- Fixes from a review pass:
+  - folding no longer freezes Emacs in shell and other non-Lisp files, and
+    heading levels are right outside Lisp modes
+  - a note marker inside a string no longer hides the line's real note
+  - kind icons match the whole head symbol (`delete-selection-mode` is not
+    `let`)
+  - disabling the mode restores the display table, font-lock managed props,
+    a prior `outline-minor-mode` and the header line
+  - backquoted names no longer intern new symbols
+  - focus abort uses change groups instead of the shared undo list
+  - no work on every keystroke above the first heading; folded sections get
+    no summary overlays
+- `init-panel-eldoc` is a boolean; `init-panel-focus` and the normalize
+  commands are autoloaded; `make checkdoc` fails on any warning

@@ -23,7 +23,7 @@ show falls back to plain text.
 
 ## The file convention
 
-Nothing to learn beyond two markers:
+The file convention is two note markers and one heading syntax:
 
 ```elisp
 ;;; Section                            ;; level 1 (or ";;; ------- Section", both render the same)
@@ -72,7 +72,7 @@ ordinary:
 booleans, so Emacs won't ask). Works in any major mode: `# -*- init-panel: t -*-`
 in a `.zshrc` does the same.
 
-The mode map is empty on purpose; bind what you like. `TAB` / `S-TAB` on a
+The mode map is empty on purpose; bind what you like. The bindings above use `C-c C-<letter>`, which Emacs reserves for major modes, so they can shadow a mode's own commands; pick other keys if one collides. `TAB` / `S-TAB` on a
 heading cycle it / the whole buffer — that is Emacs' own
 `outline-minor-mode-cycle`.
 
@@ -99,12 +99,13 @@ heading cycle it / the whole buffer — that is Emacs' own
 | `which-function-mode` shows the section path | always | — |
 | Flymake end-of-line text hidden while reading | `init-panel-quiet-diagnostics` | — |
 | Focus: edit the block at point in an indirect buffer over the panel | `init-panel-focus`, `init-panel-focus-frame`, `init-panel-focus-max-height` | window below instead of a child frame |
-| Note of the form at point echoed via eldoc | `init-panel-eldoc` nil / `'always` | — |
+| Note of the form at point echoed via eldoc | `init-panel-eldoc` nil / t | — |
 | Line at point shown as typed | `init-panel-raw-at-point` nil | — |
 
-Icons default to [Nerd Font](https://www.nerdfonts.com/) codepoints. Every glyph
-is checked with `char-displayable-p`, so without such a font you get plain
-Unicode or the literal text, never a tofu box.
+Icons default to [Nerd Font](https://www.nerdfonts.com/) codepoints. Each glyph is checked
+with `char-displayable-p` before it is drawn; one the display cannot render is
+skipped and the typed text shows instead. Set the icon options to plain
+characters if you do not use a Nerd Font.
 
 ## Commands
 
@@ -125,6 +126,49 @@ notes aligned), a handful of overlays in the left margin managed by
 fontifies what is on screen. For scale: fontifying a whole generated
 1000-line init with `font-lock-ensure`, byte-compiled, takes roughly 70-110 ms
 in batch Emacs 31 (including the stock Emacs Lisp highlighting).
+
+## Options
+
+All options are in the `init-panel` customize group.
+
+| Option | Default | Effect |
+|---|---|---|
+| `init-panel-style` | `column` | Where notes are drawn: `column` or `margin` (right margin). |
+| `init-panel-column` | 70 | Column notes align to in `column` style. |
+| `init-panel-column-auto` | nil | Push the column right past the widest visible code line. |
+| `init-panel-margin-width` | `auto` | Right margin width in `margin` style. |
+| `init-panel-margin-min` | 24 | Below this width the `auto` margin collapses to zero. |
+| `init-panel-margin-max` | 60 | Widest margin `auto` will use. |
+| `init-panel-min-code-width` | 60 | Columns always kept for code when sizing the margin. |
+| `init-panel-eldoc` | nil | Echo the note of the form at point through eldoc. |
+| `init-panel-raw-at-point` | nil | Show the line at point exactly as typed. |
+| `init-panel-heading-column` | 70 | Visual column where a heading name starts when its rule is drawn. |
+| `init-panel-rule-chars` | `─` / `╌` | Rule character per heading level. |
+| `init-panel-glyph-alist` | `◆` `◇` … | Marker to glyph shown in its place. |
+| `init-panel-prose-comments` | t | Decorate plain `;;` / `;` comments too. |
+| `init-panel-section-icons` | name regexps | Heading name to icon. |
+| `init-panel-kind-margin` | t | Show a form-kind icon in the left margin. |
+| `init-panel-kind-icons` | head-symbol regexps | Head symbol of a form to icon. |
+| `init-panel-margin-cells` | 4 | Left margin width: marker, a space, the icon. |
+| `init-panel-section-guide` | `marker` | Current-section indicator: `marker`, `bar` or nil. |
+| `init-panel-marker-char` | `▸` | Character used by the `marker` guide. |
+| `init-panel-guide-char` | `│` | Character used by the `bar` guide. |
+| `init-panel-highlight-keys` | t | Key face for key descriptions in notes. |
+| `init-panel-tag-faces` | fix, bug, hack, … | `[tag]` word to badge face. |
+| `init-panel-link-symbols` | t | Symbol names in notes become links to their docs. |
+| `init-panel-package-index` | t | List `use-package` names under "Packages" in imenu. |
+| `init-panel-highlight-targets` | t | Give the first argument of each form its own face. |
+| `init-panel-fold-summary` | t | Show keywords of a folded `use-package` form. |
+| `init-panel-header-line` | `point` | Breadcrumb: `point`, `window-start` or nil. |
+| `init-panel-quiet-diagnostics` | t | Hide end-of-line checker text while the mode is on. |
+| `init-panel-ellipsis` | ` ⬎` | Text at the end of a folded heading. |
+| `init-panel-use-buttons` | nil | Value for `outline-minor-mode-use-buttons` while the mode is on. |
+| `init-panel-focus-frame` | t | Open focus in a child frame on graphical displays. |
+| `init-panel-focus-max-height` | 40 | Most lines a focus frame or window takes. |
+
+## Limitations
+
+- The panel turns on only where a file asks for it (`init-panel: t`); it never enables itself in an ordinary buffer.
 
 ## Status
 

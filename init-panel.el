@@ -1,5 +1,8 @@
 ;;; init-panel.el --- Read your init as a panel: folding, icons, notes -*- lexical-binding: t -*-
 
+;; Copyright (C) 2026 Mahatmus
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
 ;; Author: Mahatmus
 ;; Version: 0.2.0
 ;; Package-Requires: ((emacs "29.1"))
@@ -12,6 +15,14 @@
 ;; it under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation, either version 3 of the License, or
 ;; (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ;;; Commentary:
 
@@ -48,6 +59,9 @@
 ;; Every visual is a `defcustom' and degrades to plain text when the
 ;; display can't show a glyph (`char-displayable-p').  Icons default to
 ;; Nerd Font codepoints; without such a font you get `◆', `◇' and ASCII.
+;;
+;; Comment headings need a comment starter of one character (`;', `#',
+;; `%'); multi-character starters such as `//' are not supported.
 ;;
 ;; Turn it on per file, never globally: an ordinary .el must look ordinary.
 ;; Put the file-local variable in the first line of the files you read this
@@ -117,10 +131,10 @@ window's total width."
   :type 'integer)
 
 (defcustom init-panel-eldoc nil
-  "When to echo the note of the form at point through eldoc.
-nil never (notes are already visible inline in `column' style), `always'
-regardless of style — useful when long lines push a note off-screen."
-  :type '(choice (const nil) (const always)))
+  "Non-nil means echo the note of the form at point through eldoc.
+Useful when long lines push a note off-screen; notes are already visible
+inline in `column' style."
+  :type 'boolean)
 
 (defcustom init-panel-raw-at-point nil
   "When non-nil, the line under point is shown exactly as typed.
@@ -194,18 +208,19 @@ so any editor preserves them); on a display that can't show them the
   '(("use-package\\|package-install\\|straight-use-package" . "")           ; package
     ("setq\\|setopt\\|setq-default\\|setq-local\\|customize-set-variable" . "") ; cog
     ("add-hook\\|remove-hook" . "\U000f06e2")                                     ; hook
-    ("keymap-\\|global-set-key\\|define-key\\|bind-key\\|key-chord" . "")   ; keyboard
+    ("keymap-.*\\|global-set-key\\|define-key\\|bind-key\\|key-chord" . "")   ; keyboard
     ("advice-add\\|advice-remove\\|define-advice" . "")                     ; medkit
-    ("load\\|require\\|autoload" . "")                                      ; download
+    ("load\\(?:-file\\)?\\|require\\|autoload" . "")                                      ; download
     ("defun\\|defmacro\\|cl-defun\\|defalias\\|define-minor-mode" . "")     ; method
     ("defvar\\|defcustom\\|defconst\\|defface\\|defvar-local" . "")         ; variable
-    ("with-eval-after-load\\|eval-after-load\\|run-with" . "")              ; clock
+    ("with-eval-after-load\\|eval-after-load\\|run-with-.*" . "")              ; clock
     ("push\\|add-to-list\\|dolist\\|dotimes\\|mapc" . "")                   ; list
     ("let\\|when\\|unless\\|if\\|progn\\|condition-case" . "")              ; code
     ("[a-z-]+-mode\\'" . ""))                                               ; sliders
   "Regexp on the head symbol of a top-level form → icon for the left margin.
-First match wins; forms with no match get no icon.  Defaults are Nerd Font
-codepoints written as \\u escapes."
+Each regexp must match the whole symbol.  First match wins; forms with
+no match get no icon.  Defaults are Nerd Font codepoints written as
+\\u escapes."
   :type '(alist :key-type regexp :value-type string))
 
 (defcustom init-panel-section-guide 'marker
@@ -361,13 +376,9 @@ Quieter than the note markers: prose is context, notes are the point.")
 
 (defface init-panel-target
   '((t :inherit font-lock-constant-face :weight bold))
-  "Face of a top-level form's first argument, the thing the line is about.
+  "Face of a top-level form's first argument.
 The package in `(use-package NAME', the variable in `(setq VAR', the hook
 in `(add-hook HOOK', the key in `(keymap-global-set KEY'.")
-
-(defface init-panel-package
-  '((t :inherit init-panel-target))
-  "Face of the name in `(use-package NAME' (a kind of target).")
 
 (defface init-panel-kind
   '((t :inherit font-lock-comment-delimiter-face))
@@ -415,11 +426,19 @@ between the previous and the next heading of any level.")
 (defvar-local init-panel--marked-headings nil
   "Line-beginning positions of the heading lines to mark in `marker' style.")
 
-(defvar-local init-panel--display-table nil
-  "Display table that carries the fold ellipsis for this buffer.")
+(defvar-local init-panel--idle-bounds nil
+  "(BEG . END) markers of the text above the first heading, when point is there.
+Cached so that moving inside it does not search for a section on every key.")
 
-(defvar-local init-panel--saved-header-line nil
-  "`header-line-format' as it was before the breadcrumb replaced it.")
+(defvar-local init-panel--saved-state nil
+  "Plist of what `init-panel-mode' replaced, restored when it is turned off.
+Keys: :display-table, :managed-props, :outline-minor-mode, :header-line,
+:margins, :outline-regexp, :outline-level.")
+
+(defvar init-panel--scroll-timer nil
+  "Pending layout refresh after a scroll.
+ponytail: one global timer, so a scroll in one window can postpone the
+refresh of another.  Make it per-window if that ever shows.")
 
 (defvar-local init-panel--left-margin-set nil
   "Non-nil once the mode has given this buffer's windows a left margin.")
@@ -438,6 +457,11 @@ between the previous and the next heading of any level.")
   "Keymap active on symbol links inside notes.")
 
 ;;;; Helpers
+
+(defun init-panel--outline-level ()
+  "Heading level, as the variable `outline-level'.
+1 for three comment characters, 2 for four."
+  (- (/ (1- (- (match-end 0) (match-beginning 0))) (length (init-panel--comment))) 2))
 
 (defun init-panel--comment ()
   "The comment starter of this buffer, trimmed (\";\" for Lisp)."
@@ -483,11 +507,14 @@ between the previous and the next heading of any level.")
   (let ((ch (cdr (assq level init-panel-rule-chars))))
     (and ch (init-panel--displayable-p ch) ch)))
 
-(defun init-panel--icon-for (name table)
-  "First displayable icon in TABLE whose regexp matches NAME (case-insensitive)."
+(defun init-panel--icon-for (name table &optional whole)
+  "First displayable icon in TABLE whose regexp matches NAME (case-insensitive).
+With WHOLE the regexp must match all of NAME, so `let' does not match
+`delete-selection-mode'."
   (let ((case-fold-search t))
     (seq-some (lambda (pair)
-                (and (string-match-p (car pair) name)
+                (and (string-match-p (if whole (concat "\\`\\(?:" (car pair) "\\)\\'") (car pair))
+                                name)
                      (init-panel--displayable-p (cdr pair))
                      (cdr pair)))
               table)))
@@ -556,14 +583,31 @@ Group 1 is three comment characters for a section, four for a subsection."
 ;;;; Font-lock: notes
 
 (defun init-panel--search-note (limit)
-  "Font-lock matcher for note lines up to LIMIT.
-Skips markers inside strings or other comments."
-  (let (found)
-    (while (and (not found) (re-search-forward init-panel--note-re limit t))
-      (let ((state (save-excursion (syntax-ppss (match-beginning 3)))))
-        (when (and (not (nth 3 state)) (not (nth 4 state)))
-          (setq found t))))
+  "Search forward to LIMIT for a note marker outside strings and comments.
+On success point is at the end of the line and the match data follow
+`init-panel--note-re': 1 code, 2 gap, 3 marker and text, 4 marker, 5 text.
+A marker inside a string is skipped and the search goes on along the same
+line, so a real note after it is still found."
+  (let ((marker-re (concat "\\([ \t]*\\)\\(" (regexp-quote (init-panel--comment)) "[>.]\\)"))
+        found)
+    (while (and (not found) (re-search-forward marker-re limit t))
+      (let* ((gap (match-beginning 1))
+             (mb (match-beginning 2))
+             (me (match-end 2))
+             (state (save-excursion (syntax-ppss mb))))
+        (unless (or (nth 3 state) (nth 4 state))
+          (let ((bol (save-excursion (goto-char mb) (line-beginning-position)))
+                (eol (save-excursion (goto-char mb) (line-end-position))))
+            (set-match-data (list bol eol bol gap gap mb mb eol mb me me eol))
+            (goto-char eol)
+            (setq found t)))))
     found))
+
+(defun init-panel--note-on-line ()
+  "Non-nil, with note match data, when the current line carries a real note."
+  (save-excursion
+    (beginning-of-line)
+    (init-panel--search-note (line-end-position))))
 
 (defun init-panel--in-margin-p ()
   "Non-nil when notes currently go to the margin in this buffer."
@@ -652,7 +696,7 @@ Only adds properties; the caller has already applied the base face."
         (goto-char beg)
         (while (re-search-forward init-panel--backquote-re end t)
           (when-let* ((sym (or (init-panel--link-symbol (match-string-no-properties 1))
-                               (intern (match-string-no-properties 1)))))
+                               (intern-soft (match-string-no-properties 1)))))
             (add-face-text-property (match-beginning 1) (match-end 1) 'init-panel-link)
             (add-text-properties (match-beginning 1) (match-end 1) (init-panel--link-props sym))))
         (goto-char beg)
@@ -725,13 +769,14 @@ Headings (3+ chars), notes and autoload cookies are left to their own rules."
                   (re-search-forward (concat "\\(" c "+\\)\\(?:[ \t]+\\|$\\)\\(.*\\)$") limit t))
         (let* ((beg (match-beginning 1))
                (len (- (match-end 1) beg))
-               ;; `syntax-ppss' moves point; without `save-excursion' a
-               ;; rejected match would be found again forever.
+               ;; syntax-ppss moves point; unguarded, a rejected match
+               ;; would be found again forever.
                (state (save-excursion (syntax-ppss beg))))
-          (when (and (<= len 2)
-                     (not (nth 3 state)) (not (nth 4 state))
-                     (not (string-match-p "\\`[>.]" (match-string-no-properties 2))))
-            (setq found t))))
+          (if (and (<= len 2)
+                   (not (nth 3 state)) (not (nth 4 state))
+                   (not (string-match-p "\\`[>.]" (match-string-no-properties 2))))
+              (setq found t)
+            (goto-char (1+ beg)))))
       found)))
 
 (defun init-panel--prose-marker-props ()
@@ -813,7 +858,7 @@ A quote or #' prefix is skipped; a list argument does not match.")
   "Icon for the top-level form starting at point (bol), or nil."
   (and init-panel-kind-margin
        (looking-at "(\\([^ \t\n()]+\\)")
-       (init-panel--icon-for (match-string-no-properties 1) init-panel-kind-icons)))
+       (init-panel--icon-for (match-string-no-properties 1) init-panel-kind-icons t)))
 
 (defun init-panel--in-section-p (pos)
   "Non-nil when POS is inside the cached section bounds."
@@ -904,20 +949,36 @@ subsection, its section's too."
   (dolist (w (get-buffer-window-list (current-buffer) nil t))
     (init-panel--jit-margin (window-start w) (window-end w t))))
 
+(defun init-panel--idle-bounds-at (pos)
+  "(BEG . END) markers of the text above the first heading when POS is there."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((c (regexp-quote (init-panel--comment))))
+      (let ((first (if (re-search-forward (concat "^" c "\\{3\\} ") nil t)
+                       (line-beginning-position)
+                     (point-max))))
+        (when (< pos first)
+          (cons (copy-marker (point-min)) (copy-marker first)))))))
+
 (defun init-panel--locate-point ()
   "Recompute the cached bounds (and marked headings) for point."
+  (setq init-panel--idle-bounds nil)
   (pcase init-panel-section-guide
     ('bar (setq init-panel--section-bounds (init-panel--section-bounds-at (point))
                 init-panel--marked-headings nil))
     ('marker (let ((r (init-panel--item-bounds-at (point))))
                (setq init-panel--section-bounds (car r)
                      init-panel--marked-headings (cdr r))))
-    (_ (setq init-panel--section-bounds nil init-panel--marked-headings nil))))
+    (_ (setq init-panel--section-bounds nil init-panel--marked-headings nil)))
+  (unless init-panel--section-bounds
+    (setq init-panel--idle-bounds (init-panel--idle-bounds-at (point)))))
 
 (defun init-panel--guide-update ()
   "Move the section guide/marker when point left the cached region."
   (when (and init-panel-section-guide
-             (not (init-panel--in-section-p (point))))
+             (not (init-panel--in-section-p (point)))
+             (not (let ((b init-panel--idle-bounds))
+                    (and b (<= (car b) (point)) (< (point) (cdr b))))))
     (init-panel--locate-point)
     (init-panel--refresh-visible-margins)))
 
@@ -948,7 +1009,8 @@ Only keywords at the shallowest indentation count, so `:map' inside a
       (goto-char (point-min))
       (while (re-search-forward "^(use-package[ \t]" nil t)
         (let ((eol (line-end-position)))
-          (when (invisible-p eol)
+          (when (and (invisible-p eol)
+                     (not (invisible-p (line-beginning-position))))
             (let* ((end (max eol (or (ignore-errors (scan-sexps (line-beginning-position) 1)) eol)))
                    (kws (init-panel--form-keywords eol end)))
               (when kws
@@ -969,7 +1031,7 @@ marker counts."
         (goto-char (window-start window))
         (while (< (point) end)
           (unless (looking-at-p (concat "[ \t]*" (regexp-quote (init-panel--comment))))
-            (if (looking-at init-panel--note-re)
+            (if (init-panel--note-on-line)
                 (goto-char (match-end 1))
               (end-of-line)
               (skip-chars-backward " \t"))
@@ -1013,7 +1075,6 @@ buffer text, so a fixed width keeps them next to the line numbers."
                (margins (window-margins window)))
           (unless (and (eql (car margins) left) (eql (cdr margins) right))
             (set-window-margins window left right))
-          (when left (setq init-panel--left-margin-set t))
           (if (eq init-panel-style 'margin)
               (unless (eq (null right) init-panel--inline)
                 (setq init-panel--inline (null right) flush t))
@@ -1025,9 +1086,10 @@ buffer text, so a fixed width keeps them next to the line numbers."
           (when flush (font-lock-flush)))))))
 
 (defun init-panel--reset-margins (window)
-  "Drop the margins `init-panel-mode' gave WINDOW."
+  "Give WINDOW back the margins it had before `init-panel-mode'."
   (when (window-live-p window)
-    (set-window-margins window (and (not init-panel--left-margin-set) (car (window-margins window))) nil)))
+    (let ((saved (plist-get init-panel--saved-state :margins)))
+      (set-window-margins window (car saved) (cdr saved)))))
 
 (defun init-panel--refresh-windows (&optional frame-or-window)
   "Recompute margins for every window showing an `init-panel-mode' buffer.
@@ -1065,16 +1127,14 @@ FRAME-OR-WINDOW limits the windows to one frame (a window names its frame)."
           notes)
       (when (< beg end)
         (goto-char beg)
-        (while (re-search-forward init-panel--note-re end t)
-          (let ((state (save-excursion (syntax-ppss (match-beginning 3)))))
-            (unless (or (nth 3 state) (nth 4 state))
-              (push (string-trim (match-string-no-properties 5)) notes))))
+        (while (init-panel--search-note end)
+          (push (string-trim (match-string-no-properties 5)) notes))
         (when notes (string-join (nreverse notes) " "))))))
 
 (defun init-panel--eldoc (callback &rest _)
   "Eldoc function: pass the note of the form at point to CALLBACK.
-Only when `init-panel-eldoc' is `always'."
-  (when (eq init-panel-eldoc 'always)
+Only when `init-panel-eldoc' is non-nil."
+  (when init-panel-eldoc
     (when-let* ((note (init-panel--note-at-point)))
       (funcall callback note :thing "note" :face 'init-panel-note))))
 
@@ -1094,13 +1154,12 @@ Only when `init-panel-eldoc' is `always'."
     (let (names)
       (when (ignore-errors (outline-back-to-heading t) t)
         (when-let* ((name (init-panel--heading-name))) (push name names))
-        (while (ignore-errors (outline-up-heading 1 t) t)
-          (when-let* ((name (init-panel--heading-name))) (push name names))))
+        (let ((here (point)))
+          (while (and (ignore-errors (outline-up-heading 1 t) t)
+                      (< (point) here))        ; no move: top reached (sh-mode never signals)
+            (setq here (point))
+            (when-let* ((name (init-panel--heading-name))) (push name names)))))
       (when names (string-join names " › ")))))
-
-(defun init-panel--current-section ()
-  "`add-log-current-defun-function' for `which-function-mode'."
-  (init-panel--section-path))
 
 (defun init-panel--imenu-index ()
   "Build the imenu index with folding suspended.
@@ -1130,9 +1189,7 @@ continuations line up under the note above."
       (when (or (> (match-end 3) (match-beginning 3)) (> (- (match-end 4) (match-beginning 4)) 0))
         (replace-match (concat (match-string 1) " " (match-string 5)) t t))
       nil)
-     ((and (progn (goto-char bol) (looking-at init-panel--note-re))
-           (let ((st (save-excursion (syntax-ppss (match-beginning 3)))))
-             (not (or (nth 3 st) (nth 4 st)))))
+     ((progn (goto-char bol) (init-panel--note-on-line))
       (let* ((code (string-trim-right (match-string 1)))
              (note (match-string 3))
              (col (if (string-empty-p code) (or last-marker-col 0) (1+ (length code)))))
@@ -1141,6 +1198,7 @@ continuations line up under the note above."
         col))
      (t last-marker-col))))
 
+;;;###autoload
 (defun init-panel-normalize-region (beg end)
   "Strip typed layout between BEG and END: heading rules and note padding.
 The panel draws both, so the file only needs the markers.  Returns the
@@ -1160,6 +1218,7 @@ number of lines changed."
     (set-marker end nil)
     changed))
 
+;;;###autoload
 (defun init-panel-normalize-buffer ()
   "Strip the typed layout from the whole buffer.
 See `init-panel-normalize-region'."
@@ -1180,9 +1239,9 @@ See `init-panel-normalize-region'."
     map)
   "Keymap of `init-panel-focus-mode'.")
 
-(defvar-local init-panel--focus-undo-mark nil
-  "Head of `buffer-undo-list' when the focus buffer opened.
-`init-panel-focus-abort' undoes back to it.")
+(defvar-local init-panel--focus-change-group nil
+  "Change group opened with the focus buffer.
+`init-panel-focus-abort' cancels it, `init-panel-focus-close' accepts it.")
 
 (define-minor-mode init-panel-focus-mode
   "Editing one block of a panel in its own buffer; \\[init-panel-focus-close] returns."
@@ -1215,9 +1274,9 @@ A form's trailing note continuations (code-less `;.' lines) are included."
     (truncate-string-to-width (string-trim line) 60 nil nil "…")))
 
 (defun init-panel--focus-buffer (beg end)
-  "An indirect buffer of the current buffer, narrowed to BEG..END, ready to edit.
-The clone is a plain buffer: no panel, no margins, no mode line — just the
-block, so the whole frame is room to work."
+  "Return an indirect buffer of the current buffer, narrowed to BEG..END.
+The clone has no panel, margins or mode line, so the block gets the
+whole frame to work in."
   (let* ((base (current-buffer))
          (title (init-panel--focus-title beg end))
          (name (generate-new-buffer-name (format "*focus: %s*" title)))
@@ -1235,7 +1294,8 @@ block, so the whole frame is room to work."
       ;; No checker in a scratch view of a block; this also silences the
       ;; "untrusted content" notice.
       (setq-local flymake-diagnostic-functions nil)
-      (setq init-panel--focus-undo-mark buffer-undo-list)
+      (setq init-panel--focus-change-group (prepare-change-group clone))
+      (activate-change-group init-panel--focus-change-group)
       (setq init-panel--focus-base base)
       (init-panel-focus-mode 1))
     clone))
@@ -1267,6 +1327,7 @@ block, so the whole frame is room to work."
       (pop-to-buffer clone `((display-buffer-below-selected) (window-height . ,height)))
       (set-window-margins (selected-window) nil nil))))
 
+;;;###autoload
 (defun init-panel-focus ()
   "Edit the block at point in its own buffer, over the folded panel.
 The block is the section under a heading, or the top-level form around
@@ -1283,15 +1344,17 @@ is shared, nothing is copied back.  \\[init-panel-focus-close] returns."
 (defun init-panel-focus-abort ()
   "Undo everything done in this focus buffer, then close it."
   (interactive)
-  (let ((mark init-panel--focus-undo-mark)
-        (pending buffer-undo-list))
-    (while (and (consp pending) (not (eq pending mark)))
-      (setq pending (primitive-undo 1 pending))))
+  (when init-panel--focus-change-group
+    (cancel-change-group init-panel--focus-change-group)
+    (setq init-panel--focus-change-group nil))
   (init-panel-focus-close))
 
 (defun init-panel-focus-close ()
   "Close the focus buffer and go back to the panel it came from."
   (interactive)
+  (when init-panel--focus-change-group
+    (accept-change-group init-panel--focus-change-group)
+    (setq init-panel--focus-change-group nil))
   (let* ((clone (current-buffer))
          (base init-panel--focus-base)
          (frame (selected-frame)))
@@ -1333,18 +1396,28 @@ Bind what you like: `init-panel-show-headings',
   (init-panel--build-regexps)
   (init-panel--build-glyphs)
   (setq init-panel--point-line (and init-panel-raw-at-point (line-beginning-position)))
+  (setq init-panel--saved-state
+        (list :display-table buffer-display-table
+              :managed-props font-lock-extra-managed-props
+              :outline-minor-mode outline-minor-mode
+              :header-line header-line-format
+              :margins (let ((w (get-buffer-window))) (and w (window-margins w)))
+              :outline-regexp outline-regexp
+              :outline-level outline-level))
   ;; native outline: folded to sections, TAB/S-TAB cycling, heading faces
   (setq-local outline-default-state 1)
   (setq-local outline-minor-mode-cycle t)
   (setq-local outline-minor-mode-highlight 'override)
   (setq-local outline-minor-mode-use-buttons init-panel-use-buttons)
+  (unless (equal (init-panel--comment) ";")  ; Lisp modes bring their own outline
+    (setq-local outline-regexp (concat (regexp-quote (init-panel--comment)) "\\{3,4\\} ")
+                outline-level #'init-panel--outline-level))
   (when outline-minor-mode (outline-minor-mode -1))
   (outline-minor-mode 1)
   ;; fold ellipsis
-  (setq init-panel--display-table (or buffer-display-table (make-display-table)))
-  (set-display-table-slot init-panel--display-table 'selective-display
-                          (string-to-vector init-panel-ellipsis))
-  (setq buffer-display-table init-panel--display-table)
+  (let ((table (if buffer-display-table (copy-sequence buffer-display-table) (make-display-table))))
+    (set-display-table-slot table 'selective-display (string-to-vector init-panel-ellipsis))
+    (setq buffer-display-table table))
   ;; rendering — add keywords first: with font-lock on, that re-runs
   ;; `font-lock-set-defaults', which resets the managed-props list
   (font-lock-add-keywords nil init-panel--keywords 'append)
@@ -1383,9 +1456,8 @@ Bind what you like: `init-panel-show-headings',
                              '(("Packages" "^(use-package[ \t]+\\([^ \t\n()]+\\)" 1)))
                         imenu-generic-expression)))
   (setq-local imenu-create-index-function #'init-panel--imenu-index)
-  (setq-local add-log-current-defun-function #'init-panel--current-section)
+  (setq-local add-log-current-defun-function #'init-panel--section-path)
   (when init-panel-header-line
-    (setq init-panel--saved-header-line header-line-format)
     (setq header-line-format '(:eval (init-panel--header))))
   ;; quiet diagnostics
   (when (and init-panel-quiet-diagnostics (boundp 'flymake-show-diagnostics-at-end-of-line))
@@ -1409,15 +1481,12 @@ Bind what you like: `init-panel-show-headings',
   (remove-overlays nil nil 'init-panel-summary t)
   (dolist (w (get-buffer-window-list (current-buffer) nil t))
     (init-panel--reset-margins w))
-  (setq init-panel--left-margin-set nil)
   (unless (seq-some (lambda (b) (and (not (eq b (current-buffer)))
                                      (buffer-local-value 'init-panel-mode b)))
                     (buffer-list))
     (remove-hook 'window-size-change-functions #'init-panel--refresh-windows)
     (remove-hook 'window-buffer-change-functions #'init-panel--refresh-windows)
     (remove-hook 'window-scroll-functions #'init-panel--on-scroll))
-  (when init-panel-header-line
-    (setq header-line-format init-panel--saved-header-line))
   (when (local-variable-p 'flymake-show-diagnostics-at-end-of-line)
     (kill-local-variable 'flymake-show-diagnostics-at-end-of-line)
     (when (bound-and-true-p flymake-mode)
@@ -1430,7 +1499,16 @@ Bind what you like: `init-panel-show-headings',
   (kill-local-variable 'outline-minor-mode-cycle)
   (kill-local-variable 'outline-minor-mode-highlight)
   (kill-local-variable 'outline-minor-mode-use-buttons)
-  (outline-minor-mode -1)
+  (let ((saved init-panel--saved-state))
+    (when font-lock-unfontify-buffer-function  ; while our props are still managed
+      (font-lock-unfontify-buffer))
+    (outline-show-all)
+    (unless (plist-get saved :outline-minor-mode) (outline-minor-mode -1))
+    (setq-local outline-regexp (plist-get saved :outline-regexp)
+                outline-level (plist-get saved :outline-level))
+    (setq buffer-display-table (plist-get saved :display-table)
+          font-lock-extra-managed-props (plist-get saved :managed-props)
+          header-line-format (plist-get saved :header-line)))
   (font-lock-flush))
 
 ;;;; Opt-in per file

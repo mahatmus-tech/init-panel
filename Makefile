@@ -11,7 +11,9 @@ compile:
 	rm -f $(PKG).elc
 
 checkdoc:
-	$(EMACS) -Q --batch --eval '(checkdoc-file "$(PKG).el")'
+	@out=$$($(EMACS) -Q --batch --eval '(checkdoc-file "$(PKG).el")' 2>&1); \
+	  echo "$$out"; \
+	  if echo "$$out" | grep -q '^$(PKG).el:[0-9]'; then exit 1; fi
 
 # Needs package-lint on the load path (M-x package-install RET package-lint,
 # or LINT_DIR=/path/to/package-lint).

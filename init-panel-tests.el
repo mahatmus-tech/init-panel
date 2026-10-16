@@ -5,6 +5,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 (require 'init-panel)
 
 (defconst init-panel-tests--elisp "\
@@ -66,8 +67,7 @@ export BAR=2 #> [perf]: bar is fast
 
 (defun init-panel-tests--faces (needle offset)
   "Faces (as a list) at OFFSET from the start of the line containing NEEDLE."
-  (let ((f (init-panel-tests--prop needle offset 'face)))
-    (if (listp f) f (list f))))
+  (ensure-list (init-panel-tests--prop needle offset 'face)))
 
 (defun init-panel-tests--margin-string (needle)
   "Margin string of the overlay on the line containing NEEDLE."
@@ -129,7 +129,7 @@ export BAR=2 #> [perf]: bar is fast
     (should (equal (get-text-property (- (point) 3) 'display)
                    `(space :align-to (,init-panel-column . width))))
     (should (equal (get-text-property (- (point) 2) 'display) "→"))
-    (should (memq 'init-panel-note (let ((f (get-text-property (1- (line-end-position)) 'face))) (if (listp f) f (list f)))))
+    (should (memq 'init-panel-note (ensure-list (get-text-property (1- (line-end-position)) 'face))))
     (init-panel-tests--goto ";. continuation")
     (re-search-forward ";\\.")
     (should (equal (get-text-property (- (point) 2) 'display) "↳"))))
@@ -181,9 +181,9 @@ export BAR=2 #> [perf]: bar is fast
   (init-panel-tests--with-buffer emacs-lisp-mode init-panel-tests--elisp
     (init-panel-tests--goto "[fix]: C-x o o o")
     (re-search-forward "\\[fix\\]")
-    (should (memq 'init-panel-tag-fix (let ((f (get-text-property (- (point) 2) 'face))) (if (listp f) f (list f)))))
+    (should (memq 'init-panel-tag-fix (ensure-list (get-text-property (- (point) 2) 'face))))
     (re-search-forward "C-x o")
-    (should (memq 'help-key-binding (let ((f (get-text-property (- (point) 3) 'face))) (if (listp f) f (list f)))))
+    (should (memq 'help-key-binding (ensure-list (get-text-property (- (point) 3) 'face))))
     (re-search-forward "`find-file'")
     (should (eq (get-text-property (- (point) 3) 'init-panel-symbol) 'find-file))
     (should (get-text-property (- (point) 3) 'keymap))
@@ -199,7 +199,8 @@ export BAR=2 #> [perf]: bar is fast
     (backward-char 3)
     (should (eq (key-binding (kbd "RET")) 'init-panel-describe-at-point))
     (init-panel-describe-at-point)
-    (should (get-buffer "*Help*"))))
+    (should (get-buffer "*Help*"))
+    (kill-buffer "*Help*")))
 
 ;;;; Targets and prose
 
@@ -288,7 +289,7 @@ export BAR=2 #> [perf]: bar is fast
   (init-panel-tests--with-buffer emacs-lisp-mode init-panel-tests--elisp
     (init-panel-tests--goto "(setq ring-bell")
     (should (equal (substring-no-properties (init-panel--header)) " Core › Settings"))
-    (should (equal (init-panel--current-section) "Core › Settings"))
+    (should (equal (init-panel--section-path) "Core › Settings"))
     (require 'imenu)
     (let ((idx (imenu--make-index-alist t)))
       (should (assoc "Section" idx))
@@ -307,7 +308,7 @@ export BAR=2 #> [perf]: bar is fast
                    `(space :align-to (,init-panel-column . width))))
     (init-panel-tests--goto "export BAR")
     (re-search-forward "\\[perf\\]")
-    (should (memq 'init-panel-tag-perf (let ((f (get-text-property (- (point) 2) 'face))) (if (listp f) f (list f)))))
+    (should (memq 'init-panel-tag-perf (ensure-list (get-text-property (- (point) 2) 'face))))
     (should (equal (init-panel-tests--prop "# plain remark" 0 'display) "·"))
     (should (memq 'help-key-binding (init-panel-tests--faces "# plain remark" 21)))))
 
@@ -425,12 +426,10 @@ export BAR=2 #> [perf]: bar is fast
 (ert-deftest init-panel-focus-abort-undoes ()
   (init-panel-tests--with-buffer emacs-lisp-mode init-panel-tests--elisp
     (buffer-enable-undo)
-    (let ((init-panel-focus-frame nil) (base (current-buffer)) (before (buffer-string)))
+    (let ((init-panel-focus-frame nil) (before (buffer-string)))
       (init-panel-tests--goto "(setq ring-bell-function")
       (let ((clone (init-panel-focus)))
         (with-current-buffer clone
-          (buffer-enable-undo)
-          (setq init-panel--focus-undo-mark buffer-undo-list)
           (goto-char (point-max)) (insert ";; one\n")
           (undo-boundary)
           (goto-char (point-max)) (insert ";; two\n")
@@ -439,6 +438,114 @@ export BAR=2 #> [perf]: bar is fast
           (init-panel-focus-abort))
         (should-not (buffer-live-p clone))
         (should (equal (buffer-string) before))))))
+
+(ert-deftest init-panel-focus-abort-keeps-earlier-edits ()
+  (init-panel-tests--with-buffer emacs-lisp-mode init-panel-tests--elisp
+    (buffer-enable-undo)
+    (let ((init-panel-focus-frame nil))
+      (goto-char (point-max))
+      (insert ";; before focus\n")
+      (undo-boundary)
+      (let ((kept (buffer-string)))
+        (init-panel-tests--goto "(setq ring-bell-function")
+        (let ((clone (init-panel-focus)))
+          (with-current-buffer clone
+            (goto-char (point-max)) (insert ";; during\n")
+            (init-panel-focus-abort)))
+        (should (equal (buffer-string) kept))))))
+
+;;;; Non-Lisp modes
+
+(defconst init-panel-tests--sh-top "\
+echo before any heading
+### Section One
+#### Sub One
+export FOO=1
+### Section Two
+export BAR=2
+")
+
+(ert-deftest init-panel-section-path-terminates-outside-lisp ()
+  "`init-panel--section-path' must not loop where `outline-up-heading' never moves."
+  (init-panel-tests--with-buffer sh-mode init-panel-tests--sh-top
+    (let ((calls 0) (orig (symbol-function 'outline-up-heading)))
+      (cl-letf (((symbol-function 'outline-up-heading)
+                 (lambda (&rest args)
+                   (when (> (cl-incf calls) 50) (ert-fail "outline-up-heading loops"))
+                   (apply orig args))))
+        (goto-char (point-min))
+        (should-not (init-panel--section-path))
+        (init-panel-tests--goto "export FOO")
+        (should (equal (init-panel--section-path) "Section One › Sub One"))))))
+
+(ert-deftest init-panel-fold-subsections-outside-lisp ()
+  (init-panel-tests--with-buffer sh-mode init-panel-tests--sh-top
+    (init-panel-fold-subsections)
+    (should (invisible-p (save-excursion (init-panel-tests--goto "export FOO") (point))))
+    (should-not (invisible-p (save-excursion (init-panel-tests--goto "#### Sub One") (point))))
+    (init-panel-fold)
+    (should (invisible-p (save-excursion (init-panel-tests--goto "#### Sub One") (point))))
+    (should-not (invisible-p (save-excursion (init-panel-tests--goto "### Section One") (point))))))
+
+;;;; Markers inside strings
+
+(ert-deftest init-panel-marker-in-string-keeps-real-note ()
+  (init-panel-tests--with-buffer emacs-lisp-mode "(insert \";>\") ;> real note\n"
+    (let ((pos (save-excursion (goto-char (point-min)) (search-forward ") ;>") (- (point) 2))))
+      (should (equal (get-text-property pos 'display) "→"))
+      (should-not (get-text-property (+ (point-min) 9) 'display)))
+    (goto-char (point-min))
+    (should (equal (init-panel--note-at-point) "real note"))))
+
+;;;; Kind icons
+
+(ert-deftest init-panel-kind-icons-match-whole-symbol ()
+  (let ((icons init-panel-kind-icons))
+    (should (init-panel--icon-for "foo-mode" icons t))
+    (should (equal (init-panel--icon-for "delete-selection-mode" icons t)
+                   (init-panel--icon-for "foo-mode" icons t)))
+    (should (equal (init-panel--icon-for "with-eval-after-load" icons t)
+                   (init-panel--icon-for "eval-after-load" icons t)))
+    (should-not (equal (init-panel--icon-for "with-eval-after-load" icons t)
+                       (init-panel--icon-for "load" icons t)))
+    (should (equal (init-panel--icon-for "keymap-set" icons t)
+                   (init-panel--icon-for "define-key" icons t)))))
+
+;;;; Teardown of prior state
+
+(ert-deftest init-panel-disable-restores-prior-state ()
+  (with-temp-buffer
+    (insert init-panel-tests--elisp)
+    (emacs-lisp-mode)
+    (let ((table (make-display-table)))
+      (setq buffer-display-table table)
+      (set-display-table-slot table 'truncation ?>)
+      (setq header-line-format "mine")
+      (outline-minor-mode 1)
+      (let ((managed (copy-sequence font-lock-extra-managed-props)))
+        (cl-letf (((symbol-function 'init-panel--displayable-p) (lambda (_) t)))
+          (init-panel-mode 1)
+          (init-panel-mode -1))
+        (should (eq buffer-display-table table))
+        (should-not (display-table-slot table 'selective-display))
+        (should (equal font-lock-extra-managed-props managed))
+        (should (equal header-line-format "mine"))
+        (should outline-minor-mode)))))
+
+(ert-deftest init-panel-backquoted-unknown-name-not-interned ()
+  (init-panel-tests--with-buffer emacs-lisp-mode
+      "(setq x 1) ;> see `no-such-symbol-xyz-ip' here\n"
+    (should-not (intern-soft "no-such-symbol-xyz-ip"))))
+
+;;;; Folded summaries
+
+(ert-deftest init-panel-summary-skips-hidden-lines ()
+  (init-panel-tests--with-buffer emacs-lisp-mode init-panel-tests--elisp
+    (init-panel-fold)
+    (init-panel--refresh-summaries)
+    (should-not (seq-some (lambda (o) (and (overlay-get o 'init-panel-summary)
+                                           (invisible-p (save-excursion (goto-char (overlay-start o)) (line-beginning-position)))))
+                          (overlays-in (point-min) (point-max))))))
 
 ;;;; Teardown
 
